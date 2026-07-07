@@ -55,5 +55,13 @@ shipping again:
   and review them as part of the deploy, so the grant can't drift away from the code.
 
 ## Evidence
-- [ ] Screenshot 1: the agent's root-cause finding (the `AccessDeniedException` for `dynamodb:GetItem`)
-- [ ] Screenshot 2: recovery — the function returning the product and the `challenge4-app-fn-errors` alarm green
+
+### Screenshot 1: the agent's root-cause finding
+The DevOps Agent investigating `challenge4-app-fn` after the deploy and surfacing the missing `dynamodb:GetItem` permission.
+
+![Agent investigation of challenge4-app-fn post-deploy](https://raw.githubusercontent.com/DeepikaSidda/AWS-Devops-Agent/main/Screenshots/investigate-challenge4-app-fn-post-deploy-request.png)
+
+### Screenshot 2: the function's source code
+The `challenge4-app-fn` code — confirming the handler is correct and the fault is not in the code.
+
+![Source code for challenge4-app-fn](https://raw.githubusercontent.com/DeepikaSidda/AWS-Devops-Agent/main/Screenshots/code-source-for-challenge64-app-fn.png)
