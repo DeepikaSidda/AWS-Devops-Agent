@@ -1,0 +1,159 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Challenge 4 - Bad Deploy Detective. Creates a small app (a Lambda that reads
+  from a DynamoDB table) that is BROKEN on deploy: a recent "bad deploy" left
+  the function's IAM role without the permission it needs, so every request
+  fails. The code itself looks fine - the problem is elsewhere. Use the DevOps
+  Agent to find the root cause. Upload this file in the CloudFormation console.
+
+Resources:
+  DataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: challenge4-data
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  AppFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: challenge4-app-fn
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 10
+      Role: !GetAtt AppRole.Arn
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+      Code:
+        ZipFile: |
+          import os
+          import json
+          import boto3
+
+          ddb = boto3.client("dynamodb")
+          TABLE = os.environ["TABLE_NAME"]
+
+          def handler(event, context):
+              # The code is correct: it reads one item from DynamoDB.
+              # If this is failing, the problem is NOT in this code.
+              resp = ddb.get_item(TableName=TABLE, Key={"id": {"S": "1"}})
+              return {
+                  "statusCode": 200,
+                  "body": json.dumps({"item": resp.get("Item", {})}),
+              }
+
+  # Fixed: the role can write logs AND read the specific DynamoDB table the
+  # function depends on (least-privilege dynamodb:GetItem on that table only).
+  AppRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AllowReadChallenge4Table
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !GetAtt DataTable.Arn
+
+  # ---- One-time seeder: puts a sample product in the table at stack creation,
+  # so that once you fix the permission the app returns real data (not empty).
+  # This runs once and does not affect the investigation.
+  SeederRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SeedTable
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: dynamodb:PutItem
+                Resource: !GetAtt DataTable.Arn
+
+  SeederFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: challenge4-seeder
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt SeederRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          ddb = boto3.client("dynamodb")
+
+          def handler(event, context):
+              try:
+                  if event["RequestType"] == "Create":
+                      ddb.put_item(
+                          TableName=event["ResourceProperties"]["TableName"],
+                          Item={
+                              "id": {"S": "1"},
+                              "product": {"S": "Builders Hoodie"},
+                              "price": {"N": "49"},
+                          },
+                      )
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+              except Exception as e:
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {"error": str(e)})
+
+  SeedItem:
+    Type: Custom::SeedItem
+    Properties:
+      ServiceToken: !GetAtt SeederFunction.Arn
+      TableName: !Ref DataTable
+
+  ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: challenge4-app-fn-errors
+      AlarmDescription: The app started erroring (likely a bad deploy).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AppFunction
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  FunctionName:
+    Description: Run (test) this function to reproduce the failure.
+    Value: !Ref AppFunction
+  TableName:
+    Description: The DynamoDB table the function depends on.
+    Value: !Ref DataTable
+  AlarmName:
+    Description: Watch this alarm turn red after the function fails.
+    Value: !Ref ErrorAlarm
