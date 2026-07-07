@@ -106,4 +106,4 @@ aws cloudformation wait stack-delete-complete --stack-name challenge-4 --region 
 
 **Option B — Console:** CloudFormation → `challenge-4` → **Delete** → confirm, wait for **DELETE_COMPLETE** (this also removes the `challenge4-data` DynamoDB table).
 
-See [COST-AND-CLEANUP.md](../COST-AND-CLEANUP.md).
+
